@@ -2,13 +2,13 @@
 layout: post
 title:  "PrestaShop in 2019 and beyond, part 2: The Pain Points"
 subtitle: "aka What needs to be improved"
-date:   2019-02-17 09:30:00
+date:   2019-08-11 09:30:00
 authors: [ PabloBorowicz ]
 icon: icon-compass
 tags: [1.7, architecture]
 ---
 
-This is the second in a [series of articles][introduction] we introduced last month, that aims to describe where we are, where we are going, and some ideas on how we'll get there.
+This is the second in a [series of articles][introduction] we introduced earlier this year, that aims to describe where we are, where we are going, and some ideas on how we'll get there.
 
 
 # The Pain points
@@ -16,11 +16,47 @@ _(or "What needs to be improved")_
 
 In the [previous part][previous-article], we described what the current architecture looks like. In this article, we will analyze what are the main "pain points", that is, architecture issues that are dragging the project behind.
 
-## Complexity and rigitidy
+But before getting to that, let's address the elephant in the room. After reading the previous part in this series, probably the number one thing you thought of was "why _the hell_ is this so complicated?". 
 
-After reading the previous part in this series, this is probably the number one thing you thought of: "why is this so complicated?". 
+There are many reasons for that, but I think there's one that can be found at the root of it. This will be a long article, so please bear with me.
 
-Indeed, the current architecture is getting excessively complex, with a legacy part that contains a great number of crisscrossing dependencies, and a new-generation part that still requires a lot of workarounds and following many not-so-obvious rules. In addition, more layers means more code to load in memory and takes more time to execute, which in some cases may result in a performance penalty.
+First of all, I believe there is an all-too-common misunderstanding about very nature of PrestaShop. Many people think of PrestaShop as a product: something that you download and install to build your shop on your browser. But it's not. Or at least I don't see it that way, specially now that [Ready is a thing](https://www.prestashop.com/en/prestashop-ready).
+
+When I meet people and tell them what I do for a living, I usually describe PrestaShop as an _open-source platform for developing e-commerce websites_. This is in my view, a more accurate description of what this project is about.
+
+Yes, I have met people who download it and use it as-is, but I think they belong to a declining minority. To my best understanding, most people who are choosing to use the PrestaShop project in 2019 (and who succeed in doing so) do it to kickstart their own development. They are usually agencies or experts, and often they are also part of our rich community of module and theme developers who sell in the [Addons Marketplace](https://addons.prestashop.com).
+
+This means that that we, the people who work with PrestaShop's Core code, we have to keep tree kinds of "users" into account:
+
+1. The shoppers that buy things on PrestaShop shops,
+2. ... the merchants that run them (and ultimately, pay for),
+3. ... and the **developers** that work using PrestaShop to build sites, or develop modules and themes.
+
+This third "user", is very, _very_ important to us. [I mean it like Steve Ballmer](https://www.youtube.com/watch?v=1VgVJpVx9bc).
+
+It's not just because we _love_ developers (incidentally, we do!). It's because PrestaShop cannot survive without them. As such, we want to encourage them to develop for our platform. 
+
+As platform developers, we face a big challenge that most developers (or at least, web developers) usually don't need to care about: **backwards compatibility**.
+
+Developers who work with PrestaShop (or any platform for that matter) expect things to work in a certain, predictable way. Either because the vendor explicitly described them that way through documentation, or because they spent time figuring out how it works on their own, in many cases through excruciating trial-and-error and reverse engineering of undocumented code. The bottom line is, once they get something working, developers expect it to _continue working that way_—and it's a natural thing to do.
+
+This expectation about how two independent pieces of software are supposed to work together is usually based on an _interface_, a kind of contract or agreement between the two parties, that can be either explicit (ie. clearly defined) or not. If it's implicit, then it's an _understanding_ of sorts, where one of the parties basically assumes the terms while the the other party does neither validate nor challenge them. 
+
+Of course, after having invested time and money in making something work, developers won't appreciate having to update their code regularly every time there's a new platform version—ideally, it should "just work". Therefore, it goes without saying that introducing any change that breaks this agreed-upon _interface_ (a "breaking change") won't help with keeping developers interested in adopting a new version of said platform. Again, this is true for _all_ platforms.
+
+As a result, many platform vendors—PrestaShop included—will go out of their way to avoid introducing breaking changes as much as possible. But this is a double-edged sword.
+
+It is well-known that, in time, [software rots](https://en.wikipedia.org/wiki/Software_rot). Most developers agree that the best medicine for avoiding software decay is applying frequent [refactoring](https://refactoring.com/), because once code rots for good, it becomes unmaintainable and has to be rewritten—and history shows us that [rewriting from scratch is a terrible idea](https://www.joelonsoftware.com/2000/04/06/things-you-should-never-do-part-i/).
+
+However, refactoring can only get you so far until it starts to require introducing breaking changes. And once you hit that brick wall, you're stuck: either you let that part of the code rot or you introduce breaking changes that will undermine the adoption of your platform. Or worse, you introduce an _new_ subsystem that does the same thing as the old one, and keep the previous one for compatibility, consequently increasing the overall software complexity.
+
+That's one of the top reasons PrestaShop's architecture has become extremely difficult to work with. The constant need to provide as much backwards compatibility as possible, even when doing so was detrimental to the platform's overall technical quality, has ultimately undermined the project's capacity to move forward.
+
+So where do we see this in PrestaShop? Let's dive in...
+
+## Complexity and rigidity
+
+Indeed, the current architecture is getting excessively complex, with a legacy part that contains a great number of crisscrossing dependencies, and a new-generation part that still requires a lot of workarounds, and has many not-so-obvious rules. In addition, more layers means more code to load in memory, which in some cases may result in a performance penalty.
 
 On top of that, since legacy classes are still there, many of the fundamental problems that existed in the legacy architecture persist in 1.7:
 
@@ -28,19 +64,19 @@ On top of that, since legacy classes are still there, many of the fundamental pr
 2. Procedural code, thousand-line classes with too many responsibilities.
 3. Everything's public.
 
-I won't bore you right now describing all the reasons why the first two issues are problematic, as each item would require an article of its own and there are already lots of books and articles about that out there. But how do they affect PrestaShop? 
+I won't bore you right now describing all the reasons why the first two issues are problematic. Each item would require an article of its own and there are already lots of books and articles about that out there (if you're interested, you can start [here](https://en.wikipedia.org/wiki/SOLID)). I'll get back to the third in a minute.
 
-Well, these issues are typical of a certain way of developing that was commonplace in the PHP world for a long time, and I have seen them in lots of projects the age of PrestaShop. They can fly under the radar and be safely ignored for quite a while... as long as you don't write automated tests.
+These issues are typical of a certain way of developing that was commonplace in the PHP world for a long time, and I have seen them in lots of projects the age of PrestaShop. They can fly under the radar and be safely ignored for quite a while... as long as you don't intend to write automated tests.
 
-### Testing is hard; Testing PrestaShop is _very hard_
+### Quality control is hard; Quality control in PrestaShop is _very hard_
 
 ![Testing is doubting][testing-is-doubting]{: style="height:400px"}
 _Testing is doubting, by [CommitStrip](http://www.commitstrip.com/)_
 {: .text-center }
 
-Here is where we see the _consequences_ of complex, static, stateful code. Since dependencies are so tightly interweaved, putting the system in a state that allows for automated and stable testing is really, really hard. In some cases, dependencies and hidden state can become extremely difficult and time-consuming to understand, specially when dealing with static cache.
+This is one of the classic _consequences_ of complex, static, stateful code. Since dependencies are so tightly interweaved, putting the system in a state that allows to test a feature in an isolated and predictable way for automated testing is really, really hard. In some cases, dependencies and hidden state can become extremely difficult and time-consuming to understand, specially when dealing with static cache (cached data that persist between calls to a same method).
 
-This leads to test scripts that are too complex and too hard to maintain.
+Unsurprisingly, hard-to-test code leads to complex, hard-to-maintain test scripts.
 
 Up until a couple months ago, here's what we had:
 
