@@ -14,22 +14,22 @@ This is the second in a [series of articles][introduction] we introduced earlier
 # The Pain points
 _(or "What needs to be improved")_
 
-In the [previous part][previous-article], we described what the current architecture looks like. In this article, we will analyze what are the main "pain points", that is, architecture issues that are dragging the project behind.
+In the [previous part][previous-article], we described what the current architecture looks like. In this article, we will analyze what are the main "pain points", that is, architecture issues that are dragging the project down.
 
 But before getting to that, let's address the elephant in the room. After reading the previous part in this series, probably the number one thing you thought of was "why _the hell_ is this so complicated?". 
 
 There are many reasons for that, but I think there's one that can be found at the root of it. This will be a long article, so please bear with me.
 
-First of all, I believe there is an all-too-common misunderstanding about very nature of PrestaShop. Many people think of PrestaShop as a product: something that you download and install to build your shop on your browser. But it's not. Or at least I don't see it that way, specially now that [Ready is a thing](https://www.prestashop.com/en/prestashop-ready).
+First of all, I believe there is an all-too-common misunderstanding about the very nature of PrestaShop. Many people think of PrestaShop as a product: something that you download and install to build and run your shop from your browser. But it's not. Or at least I don't see it that way.
 
 When I meet people and tell them what I do for a living, I usually describe PrestaShop as an _open-source platform for developing e-commerce websites_. This is in my view, a more accurate description of what this project is about.
 
-Yes, I have met people who download it and use it as-is, but I think they belong to a declining minority. To my best understanding, most people who are choosing to use the PrestaShop project in 2019 (and who succeed in doing so) do it to kickstart their own development. They are usually agencies or experts, and often they are also part of our rich community of module and theme developers who sell in the [Addons Marketplace](https://addons.prestashop.com).
+Yes, I have met people who download it and use it as-is, but I think they belong to a declining minority. To my best understanding, most people who are choosing to use the PrestaShop project in 2019 (and who succeed in doing so) do it to kickstart their own development. They are usually agencies or experts, and often they are also part of our rich community of module and theme developers who sell on the [Addons Marketplace](https://addons.prestashop.com).
 
-This means that that we, the people who work with PrestaShop's Core code, we have to keep tree kinds of "users" into account:
+This means that we, the people who work on PrestaShop's Core code, have to keep tree kinds of "users" into account:
 
 1. The shoppers that buy things on PrestaShop shops,
-2. ... the merchants that run them (and ultimately, pay for),
+2. ... the merchants that run PrestaShop shops (and ultimately, pay for),
 3. ... and the **developers** that work using PrestaShop to build sites, or develop modules and themes.
 
 This third "user", is very, _very_ important to us. [I mean it like Steve Ballmer](https://www.youtube.com/watch?v=1VgVJpVx9bc).
