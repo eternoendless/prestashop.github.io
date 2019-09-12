@@ -2,7 +2,7 @@
 layout: post
 title:  "PrestaShop in 2019 and beyond, part 2: The Pain Points"
 subtitle: "aka What needs to be improved"
-date:   2019-08-11 09:30:00
+date:   2019-09-11 09:30:00
 authors: [ PabloBorowicz ]
 icon: icon-compass
 tags: [1.7, architecture]
@@ -10,15 +10,16 @@ tags: [1.7, architecture]
 
 This is the second in a [series of articles][introduction] we introduced earlier this year, that aims to describe where we are, where we are going, and some ideas on how we'll get there.
 
-
 # The Pain points
 _(or "What needs to be improved")_
 
-In the [previous part][previous-article], we described what the current architecture looks like. In this article, we will analyze what are the main "pain points", that is, architecture issues that are dragging the project down.
+In the [previous part][previous-article], we described what the current architecture looks like. This article aims to analyze what are the main "pain points", that is, fundamental problems that are dragging the project down.
 
 But before getting to that, let's address the elephant in the room. After reading the previous part in this series, probably the number one thing you thought of was "why _the hell_ is this so complicated?". 
 
 There are many reasons for that, but I think there's one that can be found at the root of it. This will be a long article, so please bear with me.
+
+## Introduction
 
 First of all, I believe there is an all-too-common misunderstanding about the very nature of PrestaShop. Many people think of PrestaShop as a product: something that you download and install to build and run your shop from your browser. But it's not. Or at least I don't see it that way.
 
@@ -50,78 +51,83 @@ It is well-known that, in time, [software rots](https://en.wikipedia.org/wiki/So
 
 However, refactoring can only get you so far until it starts to require introducing breaking changes. And once you hit that brick wall, you're stuck: either you let that part of the code rot or you introduce breaking changes that will undermine the adoption of your platform. Or worse, you introduce an _new_ subsystem that does the same thing as the old one, and keep the previous one for compatibility, consequently increasing the overall software complexity.
 
-That's one of the top reasons PrestaShop's architecture has become extremely difficult to work with. The constant need to provide as much backwards compatibility as possible, even when doing so was detrimental to the platform's overall technical quality, has ultimately undermined the project's capacity to move forward.
+That's one of the top reasons PrestaShop's architecture has become so complex. The constant need to provide as much backwards compatibility as possible, even when doing so was detrimental to the platform's overall technical quality, has substantially undermined the project's capacity to move forward.
 
-So where do we see this in PrestaShop? Let's dive in...
+That said, let's dive in...
 
-## Complexity and rigidity
+## Plan
 
-Indeed, the current architecture is getting excessively complex, with a legacy part that contains a great number of crisscrossing dependencies, and a new-generation part that still requires a lot of workarounds, and has many not-so-obvious rules. In addition, more layers means more code to load in memory, which in some cases may result in a performance penalty.
+* [An aging architecture](#an-aging-architecture)
+* [No clearly-defined API](#no-clearly-defined-api)
+* [1.7 was released too soon](#17-was-released-too-soon)
+	* No clear scope, no clear vision (where do we go?)
+	* Customization forgotten (no overrides)
+	* Duplicate systems (Sf vs legacy, twig vs smarty, translations, bo theme, vue)
+* Too many dependencies with external services
+* Testing is hard
+* Obsolete dependencies (PHP 7+, jquery)
+* No specification
+* Poor documentation
 
-On top of that, since legacy classes are still there, many of the fundamental problems that existed in the legacy architecture persist in 1.7:
+## An aging architecture
 
-1. Static classes, global state (including static cache), hidden dependencies (inline instantiation, or worse... static dependencies).
-2. Procedural code, thousand-line classes with too many responsibilities.
-3. Everything's public.
+PrestaShop has deeply-rooted design issues that can be explained simply by the age of its architecture.
 
-I won't bore you right now describing all the reasons why the first two issues are problematic. Each item would require an article of its own and there are already lots of books and articles about that out there (if you're interested, you can start [here](https://en.wikipedia.org/wiki/SOLID)). I'll get back to the third in a minute.
+Web technologies have evolved massively in the last years, and industry standards are now very different compared to what they were 10 years ago, when the current foundations of PrestaShop were laid out. Back then, web applications were still being built using the classic backend-generated, form-centric approach that became commonplace during the [CGI-based era][cgi], which forged the modern Internet.
 
-These issues are typical of a certain way of developing that was commonplace in the PHP world for a long time, and I have seen them in lots of projects the age of PrestaShop. They can fly under the radar and be safely ignored for quite a while... as long as you don't intend to write automated tests.
+Fast forward to 2019, the web is a very different place. It's a mobile-first world, where experiences provided by [Progressive Web Apps][pwa] have become so rich that the frontier between a web site and a native phone app is now at its thinnest. A world where interacting with a form while offline, infinite scroll and instant interaction is now normal, and reloading a page is archaic. A world made of rich front-end applications, and simple API-based backends.
 
-### Quality control is hard; Quality control in PrestaShop is _very hard_
+Let's face it, PrestaShop's architecture, as we know it, shows its age. PrestaShop was designed for [a world of Smarty and jQuery][legacy-controllers], but we currently live in a world of React (or Vue, or Angular) and GraphQL.
 
-![Testing is doubting][testing-is-doubting]{: style="height:400px"}
-_Testing is doubting, by [CommitStrip](http://www.commitstrip.com/)_
-{: .text-center }
+### Systemic problems
 
-This is one of the classic _consequences_ of complex, static, stateful code. Since dependencies are so tightly interweaved, putting the system in a state that allows to test a feature in an isolated and predictable way for automated testing is really, really hard. In some cases, dependencies and hidden state can become extremely difficult and time-consuming to understand, specially when dealing with static cache (cached data that persist between calls to a same method).
+PrestaShop was also designed using design patterns that were commonplace in the PHP world 10 years ago but have now become obsolete.
 
-Unsurprisingly, hard-to-test code leads to complex, hard-to-maintain test scripts.
+#### Bottom up, data-centric design
 
-Up until a couple months ago, here's what we had:
+PrestaShop's architecture was designed in a database-centric, [bottom-up way](https://en.wikipedia.org/wiki/Top-down_and_bottom-up_design#Software_development). This is a classic design pattern where you start building small blocks, then build bigger blocks based on those. Typically it starts by designing the database schema, then creating your models based on that, then the code that manipulates those models.
 
-- A mix of unit/integration/survival tests, based on PhpUnit.
-- A suite of End-to-end (E2E) tests, based on Mocha, Selenium and WebDriverIO.
+If done right, this kind of design approach can be good for reusability when working in an iterative, exploratory way. But it can be a nightmare for platform maintainers that need to keep interoperability and code longevity in mind. Let me explain.
 
-Ideally, we should be able to classify our tests into three types:
+In this approach, components are designed and built _before_ they are actually used, meaning their behavior is mainly based on _guesses_ regarding what future needs they will address. Therefore, it's usually not long until an unforeseen use case is found for which the component's design is not well-adapted.
 
-- **Unit** – Where a single, completely isolated class is tested at a time.
-- **Integration** – Where a subsystem is tested in its entirety, with carefully selected dependencies replaced by test doubles.
-- **E2E** – Where the system is tested in its entirety from a user standpoint, using browser automation.
+When working in an iterative fashion this is not a problem, because you can go back to the drawing board, redesign the component and deploy it to production. It's part of the workflow. But when you're building a development platform, where this will most likely happen _after_ it is first released, this means that the maintainer will have to find a way to alter the component so that it addresses this particular behavior, **without introducing breaking changes**. This is how spaghetti code creeps in and it's also one of the most common ways technical debt is created.
 
-During the last year or so, we have had a lot of problems regarding tests that started failing unexpectedly, not because the feature they tested had stopped working, but because of unrelated technical issues:
+In PrestaShop, this problem is exacerbated by widespread data micro management, where state changes are handled through direct model manipulation (eg. "get instance of Product, change property value, save", or worse, an SQL update query) instead of transitions. In theory, models should know little about each other, and controllers should be slim on logic. Who's responsible for ensuring that products inside an order exist and are in stock, for instance? If someone update a product, who's in charge of updating search indexes? Currently there's no unique structure in the core that guarantees this vital system-wide coherence.
 
-- Our unit tests weren't really unit (usually because they tested several classes at once).
-- Many tests that weren't unit were extremely hard to understand and maintain, because of all the boilerplate code needed to put the shop in the state we needed for testing.
-- Some tests were producing side-effects that made other tests fail because of unexpected/inconsistent state (usually due to hidden cache in legacy code).
-- E2E tests failed randomly because of timeouts (Selenium + WebDriverIO issues).
+#### Global state
 
-We believe that bugs are a natural side-effect of changing things, and that automated tests are the only way to be able to consistently move forward without breaking stuff... but what happens when the tests themselves are breaking up constantly for unknown reasons?
+PrestaShop's legacy code is mainly made out of static classes which are heavily dependent on global or semi-global state, like `Context` and `Db`. While this approach could initially have seemed like a good idea (no need to think about dependencies, "cleaner", easy-to-use code that "just works"), it actually brings [a great deal of classic, well-known problems](https://softwareengineering.stackexchange.com/a/148154), including two that are very bad for any project:
 
-Based on this evidence, we recently decided to:
+* Global state and tightly interweaved dependencies are bug-prone, meaning that bugs are harder to fix and regressions are more likely to creep in.
+* It's much harder to create automated tests, which aggravates the risk of undetected regressions.
 
-- Move all PhpUnit tests into a `legacy-tests` directory while we clean them up.
-- [Introduce Behat][behat] for Integration, human-readable tests.
-- Progressively refactor tests into either Unit (completely isolated) or Integration tests.
-- Move E2E test from Selenium + Webdriver to [Puppeteer][puppeteer].
+The new architecture introduced in PrestaShop 1.7 ultimately aims at removing all static classes and replace them by components designed following the SOLID principles. However, due to the enormous amount of work it represents and the number of breaking changes it will introduce, most of the lower-level components are and will still be present for the whole lifetime of 1.7. This means that unfortunately, `Context`, `Db`, `ObjectModel` and the such aren't going away anytime soon—nor are the problems they bring.
 
-This will help us get a better grasp on tests. But it will remain hard to automate them as long as the system they test remains so complex.
+### Technical debt
 
-### Making changes is also hard
+Technical debt is a problem for all mature projects, and PrestaShop is not the exception there. As stated before, the best way to avoid software rot is to apply frequent refactoring. But if refactoring is limited by breaking changes, then it cannot be applied properly and technical debt starts piling up.
 
-Remember back in 2015, when [PrestaShop started following SemVer][semver-article]? This convention restricts what can be done in minor and patch versions, and states that only major versions can introduce API changes that would break backward compatibility (BC) with existant integrations. 
+Even though continuous efforts are being made to avoid this, having to circle around breaking changes ultimately increases complexity. And indeed, the current architecture has become quite complex, with a legacy part that contains a great number of crisscrossing dependencies, and a new-generation part that still requires following many not-so-obvious rules and many workarounds. In addition, more layers means more code to load in memory, which in some cases can also result in a performance penalty.
 
-This is good for interoperability: if integrations respect the software's API, then they can be sure they will keep working with the main software, no matter if that software is upgraded to the next minor or patch version.
 
-In the case of PrestaShop, merchants want to be able to upgrade their shop seamlessly and benefit from the new features or bug fixes, without having to change their theme, modules and customizations, or fearing something will break down. As stated before, SemVer is supposed to ensure this... as long as they follow PrestaShop's API. Sounds good, isn't it?
+## No clearly-defined API
 
-But what _exactly_ constitutes PrestaShop's API?
+As we said before, interoperability is a big subject in platform development. Since refactoring is, in the long term, unavoidable, breaking changes are bound to occur sooner or later.
 
-Right now there's no article documenting it out somewhere. If there was, we would be able to say: "This is PrestaShop's API. It is something that we are committing on. Respect it, and enjoy forward compatibility!".
+Remember back in 2015, when [PrestaShop started following SemVer][semver-article]? The Semantic Versioning (SemVer) [specification](https://semver.org/) defines that only major versions can introduce backwards incompatible API changes, while minor and patch versions must ensure backwards compatibility. 
 
-So, if it's not clearly defined anywhere... then what is this unwritten contract? Let's find out.
+This is good for interoperability: it means that as long as integrations respect the software's API, they can be sure they will keep working with the main software, even if that software is upgraded to the next minor or patch version.
 
-First, we must first identify **who** are our technical stakeholders (or "clients"). Then, we have to establish **what** are the technical resources they need to interact with, and finally define **how** those interactions will take place. Sounds familiar? We have already depicted that in the [previous article][previous-article] (see [figure][comprehensive-overview]).
+In the case of PrestaShop, merchants want to be able to upgrade their shop seamlessly and benefit from the new features and bug fixes, without having to change their theme, modules and customizations, or fear something will break down. As stated before, SemVer is supposed to ensure this, as long as third parties respect PrestaShop's API. This is true—in theory.
+
+**But... what _exactly_ constitutes PrestaShop's API?**
+
+Right now there's no article documenting it out anywhere. If there was, we would be able to say: "This is PrestaShop's API. It is something that we are committing on. Respect it, and enjoy forward compatibility!".
+
+So, if it's not clearly defined anywhere... then what is this unwritten contract made up from? Let's find out.
+
+First, we must first identify **who** are our technical stakeholders. Then, we have to establish **what** are the technical resources they need to interact with, and finally define **how** those interactions will take place. Sounds familiar? We have already depicted that in the [previous article][previous-article] (see [figure][comprehensive-overview]).
 
 By looking at the architecture overview, we can easily pinpoint PrestaShop's four main technical stakeholders:
 
@@ -137,7 +143,7 @@ If we look at the lines going in and out of them, we can see the relationships b
 	- Any parent theme (like Classic, for instance)
 	- Module templates (if they "skin" those modules)
 	- Data structures provided to templates
-	- Core javascript library (jQuery 2.x)
+	- Core javascript library (jQuery)
 - **Modules**	 depend on...
 	- Smarty and/or Twig
 	- Base module features provided by the Core
@@ -154,17 +160,20 @@ If we look at the lines going in and out of them, we can see the relationships b
 
 We have now established **who** are the stakeholders and **what** resources they need. But what about the **how**?
 
-Well, if the **how** is not clearly defined, then we are left with two choices: either there's no API, or **everything used by stakeholders is the API**.
+Well, if the **how** is not clearly defined, then we are left with two choices: either there's _no_ API, or **_everything_ used by stakeholders is the API**.
 
-That's a _pretty big_ API, isn't it?
+[Let that sink in for a minute](https://media.giphy.com/media/aZ3LDBs1ExsE8/giphy.gif). That's a _pretty big_ API, isn't it?
 
 Big indeed. As we can see, the level of dependencies is _massive_. That means that essentially, PrestaShop's "API" is made out of every template file, every public member of every PHP class, and every javascript object. Oh, and assets, too.
 
-Of course, this level of flexibility is fantastic for customizations. _Everything_ is right there, available for consumption and modification. But at what cost?
+![Use all the things](/assets/images/2019/09/use-all-the-things.jpg)
+{: .center}
 
-Having everything open up for modifications severely limits the PrestaShop's leeway to implement new things in the Core quickly without introducing backwards incompatible changes.
+Of course, this level of access is fantastic for customizations. _Everything_ is right there, available for use and modification. But at what cost?
 
-How severely does this affect us? Here are some examples of things that we cannot do until the next major version of PrestaShop:
+Having everything open up for use and modification severely limits PrestaShop's leeway to implement changes in the Core (be it features, bug fixes or refactoring) without introducing backwards incompatible changes.
+
+How severely does this affect us? Here are some examples of things that _shouldn't_ be done until the next major version of PrestaShop:
 
 - Change any public method signature in any class (rename, change its return type or structure, remove a parameter or change its type).
 - Change any public property in any class.
@@ -172,7 +181,7 @@ How severely does this affect us? Here are some examples of things that we canno
 - Add new requirements (like dropping support for old versions of PHP or browsers, requiring new server-side libraries...)
 - Replace any subsystem (like updating libraries to new major versions or replacing a library with another).
 
-Of course, we have been forced to take [some liberties][sf-upgrade] in order to be able to move forward, but that's a rule that we don't want to break if we can help it. Still, this is a recurrent pain: 
+Obviously, these requirements are incompatible with the stakes of 1.7, so we have been forced to take [some liberties][sf-upgrade] in order to be able to move forward, even if it's a rule that we try not to break if we can help it. Still, this is a recurrent pain: 
 
 - **Want to implement a new feature**? _Better think of a way to do that in a retrocompatible way_.
 - **Want to replace ObjectModels with Doctrine?** _Nope, BC break_.
@@ -180,29 +189,202 @@ Of course, we have been forced to take [some liberties][sf-upgrade] in order to 
 - **Want to upgrade that dependency to benefit from cool new features?** _Not if it's a major version upgrade_.
 - :'(
 
-#### Everything is public
+### Everything is public
 
-As if making every class part of our API was not enough of a problem, a lot of legacy core classes suffer from _public_-itis. It means that classes have lots of public methods and properties that needn't be. 
+As if making every class part of our API was not enough of a problem, a lot of legacy core classes suffer from _public_-itis. It means that classes have lots of public methods and properties that needn't be.
 
-This was problem No. 3 that I wrote about previously, which is particularly troublesome in PrestaShop, because once a class member has become public, even if it shouldn't have, it becomes part of the API, and therefore it cannot be refactored anymore!
+This is particularly troublesome in PrestaShop, because once a class member has become public—even if it was a mistake—it becomes part of the public API as soon as it's released... and therefore cannot be refactored until the next major version!
 
-This _even worse_ because of the [overrides system][overrides-system], which allows people to to replace any (legacy) core class with a custom one. Since the overrides system is based on inheritance, and inheritance grants overrides access to protected class members of the extended class, and any accessible code is considered part of the API... by extension, **protected members of legacy core classes can be considered part of the public API as well**. 
+This _even worse_ because of the [overrides system][overrides-system], which allows developers to replace any legacy core class with a custom one (violating the [Open–Closed principle](https://en.wikipedia.org/wiki/Open%E2%80%93closed_principle), by the way). Since the overrides system is based on inheritance, and inheritance grants overrides access to protected class members of the extended class, and any accessible code is considered part of the API... then **protected members of legacy core classes can be considered part of the public API as well**, because they are accessible. 
 
-As you can see, because of these restrictions, the possibilities for refactoring are severely limited.
+Having no clearly-defined contracts means we can't change anything without introducing a breaking change, which severely limits the options for improving PrestaShop.
 
-## An aging architecture
+## 1.7 was released too soon
 
-While PrestaShop 1.7 started as a refactoring, there are deeply-rooted issues that go beyond those that we described above, and that can be traced simply to the age of its architecture.
+PrestaShop 1.7.0 was a very ambitious release. It featured a [new architecture](/news/new-architecture-1-6-1-0/), a [new framework (Symfony)](/news/prestashop-1-7-and-symfony/), a new Back Office theme (later based on our [UI kit](/news/PrestaShop-UI-Kit/)), a [new default Front Office theme](/news/new-theme-1-7-introduction/) and [Starter Theme](/starter-theme-kickoff/), a [new Product page experience](/news/product-page-evolution/), a [new Modules page experience](/module-page-awakens/), a [new translation system](/news/new-translation-system-prestashop-17/) and [use of CLDR](/cldr-composer-jshint/), among many other features. 
 
-Web technologies have evolved massively in the last years, and are now very different from what they were 10 years ago, when the current foundations of PrestaShop were laid out. Back then, web applications were still being built using the classic backend-generated, form-centric approach that finds its roots in the dawn of the [CGI-based web][cgi] that forged modern Internet as we know it.
+That's an impressive list. Unfortunately, that objective was proven to be too ambitious, and the result was an underwhelming initial release.
 
-Fast forward to 2019, the web is a very different place. It's a mobile-first world, where experiences provided by [Progressive Web Apps][pwa] have become so rich that the frontier between a web site and a native phone app is now at its thinnest. A world where interacting with a form while offline, infinite scroll and instant interaction is now normal, and reloading a page is archaic. A world made of rich front-end applications, and simple API-based backends.
+Before continuing, it's important to say that following this release and between 2016 and 2018, most of the original team that developed PrestaShop 1.7 left the company or was reassigned. In 2017, a new CTO (Aurélien Pelletier) and I arrived at PrestaShop. We agreed on a new long-term vision that would point the project in the right direction, and started building a new team to make it happen. Early 2018, with the support of the newly appointed PrestaShop CEO, Alexandre Eruimy, the team started growing and the project started picking up speed again.
 
-Let's face it, PrestaShop's architecture, as it is now, does not belong there. PrestaShop was designed for [a world of Smarty and jQuery][legacy-controllers], but we currently live in a world of React (or Vue, or Angular) and GraphQL.
+Now, even though PrestaShop 1.7 is [getting better and better with every release](https://www.webbax.ch/2019/01/10/unboxing-decouverte-prestashop-1-7-5-0/), we find that many decisions that were taken during early development of 1.7 were ultimately proven to be bad calls, since they are making it harder to move the project forward.
 
-PrestaShop was designed to be extensible by means of extension points (hooks), but this is too limited, because contracts are not clearly established. Extensions must go either through a clear, previously defined path (hook: your code goes here, these are the exact things that you can do with it), or with a loosely defined scope (just replace some bits of code and cross your fingers!).
+### No clear vision
 
-There's no layer ensuring domain consistency: you just manipulate data, with little to no constraints, and little semantic meaning.
+In my view, PrestaShop 1.7.0 was developed and released without a clear, global vision of what the ultimate objective of this major version was, nor how long it would take to do it. In addition, a tradition of oral, word of mouth knowledge sharing at PrestaShop meant that if there ever was a vision, it was unknown to most and is now forever lost. This is something we are meaning to change, and this series is part of that.
+
+### Overeagerness to introduce new things
+
+Too many technical projects were started in parallel before being thoroughly thought through and were released before being properly finished. As I said before, this would be acceptable in a SaaS software where you can work iteratively and release often, but doesn't work in a development platform like PrestaShop where upgrades are costly and scarce. Of course, releasing this way resulted in a giant, arguably well-deserved backlash from the community, who described PrestaShop 1.7 as "unfinished software".
+
+Here's an example. Back in 2017, we announced that we had started [introducing Vue JS in the Back Office][vuejs], supported by a BO API, which would be used in the Stocks and Translations pages.
+
+While I think this is the way of the future (no spoilers!), in hindsight, I believe that it was too early to introduce it in 1.7, and will probably have to be redone.
+
+Don't start screaming at me just yet! Let me explain why.
+
+First of all, if you take a glance at the [architecture overview][comprehensive-overview], you'll notice that there are two different stacks in the Back Office: the _Legacy stack_ and the _New stack_. The former is pretty much unchanged since 1.6, while the latter is essentially made out of Symfony controllers and Symfony forms, rendered with twig. Two stacks, one that will progressively replace the other. Right? 
+
+**Wrong.** If you look closer, you'll see that the _New stack_ actually has not one, but **two** implementations: the Symfony one that I described, and another one, based on VueJS and an API.
+
+So, we don't have _two_ different ways of doing things, we have _three_. 
+
+This is justified because the initial idea was that VueJS was supposed to be the way the migration to Symfony should have continued starting on 1.7.3.0. But we chose to freeze that and continue working with Symfony forms and Twig. Why?
+
+Because _customization_.
+
+PrestaShop owes its success mainly to its ability to be extended and customized. For this, developers rely on extension points that allow them to add behavior in specific points, as well as conventions that allow them to replace certain bits of the software by their own.
+
+We think that this aspect wasn't thoroughly accounted for when designing the VueJS stack, as current extension methods do not work with VueJS pages. And of course they don't, because they behave in a drastically different way. So **there's no defined way to customize a VueJS page in PrestaShop right now**.
+
+If we want to allow these pages to be customizable, we have to rethink how, and provide a stable, clearly-defined way of doing it. That is a very long process that cannot be improvised in the middle of a major migration, so we have to go back to the drawing board and start over. In the meantime, we need to make those pages extensible again.
+
+Consequently, our only option right now to make all three systems converge is to continue down the Symfony path before switching to something else. This decision will make more sense once you read the next two articles in this series.
+
+In the meantime, we will continue to add VueJS in the Back Office, but only as standalone components like the [live search engine results preview component][serp] that we added in the Product Page in 1.7.5.0.
+
+
+### Duplicate systems
+
+Many of the new systems in PrestaShop 1.7 don't replace the previous ones, but feature a new, semi-independent way of doing the same thing that coexists with the previous way, kept for backwards compatibility. 
+
+Having more than one way of doing a given thing is bad for many reasons. First, it introduces cognitive friction, because as a developer you have to think about in when you should use one or the other. Second, because a business or dependency change in one must be replicated in the other. And third, if they don't produce the same output or side-effects for some reason, then it might produce systemwide inconsistencies.
+
+There are several examples of this in PrestaShop 1.7. One of them is the "Core–Adapter–Legacy" architecture. Let's explore four problems tied to this example:
+
+#### 1. Shared responsibility
+
+As described in the previous article, in order to allow old code to progressively be replaced by new code, the Core namespace conventions prohibits developers from using legacy classes directly in Core classes. When developers need legacy functionality in a Core class, it needs to be wrapped in an Adapter class that can be then injected into the Core class.
+
+**The problem:** Since all the Adapter does is wrap legacy features in a non-static class, we now have two classes that do the same: one in Adapter, one in legacy.
+
+#### 2. Different implementations/side effects
+
+The idea behind Adapters is that they should eventually be replaced by Core code that reimplements the feature, allowing us to delete the legacy class later. However, some developers chose to partially reimplement some legacy features in Adapters, but introducing a _slightly_ different behavior.
+
+**The problem:** Not only do we have two classes that do the same thing, but they do it in a _different_ way and produce _different_ side effects. Which one should we use, and when?
+
+#### 3. Little or no added value
+
+Looking at the code, we can see that many hastily made Adapters have been designed [as dumb bridges to legacy code][bad-example], even replicating method signatures and design flaws of their legacy counterparts. Some even have static methods!
+
+**The problem:** Many adapters do not even add any value to legacy classes and exist only to comply with the "no use of legacy classes in new code".
+
+#### 4. Hard dependencies
+
+To make matters worse, most Adapters do not even implement an interface, which makes it impossible to replace them with Core reimplementations without modifying the dependent classes.
+
+**The problem:** Most adapters are hard dependencies and cannot be replaced without changing the dependent code. 
+
+#### Bonus: No single source of truth
+
+And finally, there's the matter of Database access. Since most interactions with the database are performed through ObjectModels, and since ObjectModels are too difficult to reimplement with an Adapter (we want to get rid of them anyway), some developers reimplemented them using Doctrine.
+
+**The problem:** Even models have been duplicated. Some of them _aren't even in the adapter namespace_ and work in a _completely different way_... so there's no single source of truth anymore.
+
+There are many other duplicate systems in 1.7:
+
+- Symfony controllers vs Legacy controllers
+- Twig vs Smarty
+- Symfony translation system vs legacy
+- New BO theme (based on bootstrap 4) for Symfony pages vs legacy one (based on bootstrap 3) for legacy pages
+
+
+* Customization forgotten (no overrides)
+* Duplicate systems (Sf vs legacy, twig vs smarty, translations, bo theme, vue)
+
+### Legacy layout
+
+
+
+### Translation system
+
+Customization forgotten (no overrides)
+
+# Too many dependencies with external services
+
+# Obsolete dependencies (PHP 7+, jquery)
+
+# Testing is hard
+
+
+
+
+
+
+
+
+
+
+---
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## Complexity and rigidity
+
+The current architecture has become very complex, with a legacy part that contains a great number of crisscrossing dependencies, and a new-generation part that follows many not-so-obvious rules and still requires a lot of workarounds. In addition, more layers means more code to load in memory, which in some cases can also result in a performance penalty.
+
+On top of that, since legacy classes are still present, many of the fundamental problems that existed in the previous versions persist in 1.7:
+
+1. Static classes, global state (including static cache), hidden dependencies (inline instantiation, or worse... static dependencies).
+2. Procedural code, thousand-line classes with too many responsibilities.
+3. Everything's public.
+
+I won't bore you right now describing all the reasons why the first two issues are problematic. There are already lots of books and articles about that out there (if you're interested, you can start [here](https://en.wikipedia.org/wiki/SOLID)). I'll get back to the third in a minute.
+
+These issues are typical of a certain way of developing that was commonplace in the PHP world for a long time, and I have seen them in lots of projects the age of PrestaShop. They can fly under the radar and be safely ignored for quite a while... as long as you don't intend to write automated tests.
+
+### Quality assurance is hard; Quality assurance in PrestaShop is _very hard_
+
+![Testing is doubting][testing-is-doubting]{: style="height:400px"}
+_Testing is doubting, by [CommitStrip](http://www.commitstrip.com/)_
+{: .text-center }
+
+This is one of the classic _consequences_ of complex, static, globally-stateful code. Since components are so tightly interweaved and depend on global state, putting the system in a state that allows to test a feature in an isolated and predictable way for automated testing is really, really hard. In some cases, dependencies and hidden state can become extremely difficult and time-consuming to understand, specially when dealing with static in-memory cache (ie. variables that maintain their value between calls to a same method on a same thread).
+
+Unsurprisingly, hard-to-test code also leads to complex, hard-to-maintain test scripts.
+
+Let's see an example. Until a some months ago, here's what we had:
+
+- A mix of unit/integration/survival tests, based on PhpUnit.
+- A suite of End-to-end (E2E) tests, based on Mocha and Selenium.
+
+Ideally, we should be able to classify our tests into three types:
+
+- **Unit** – Where a single, completely isolated class is tested at a time.
+- **Integration** – Where a subsystem is tested in its entirety, with carefully selected dependencies replaced by test doubles.
+- **E2E** – Where the system is tested in its entirety from a user standpoint, using browser automation.
+
+We have been struggling with automated tests failing unexpectedly, not because the feature they tested had stopped working, but because of diverse, unrelated technical issues:
+
+- Some unit tests aren't really unit (usually because they tested several classes at once).
+- Many unit tests that aren't unit were also extremely hard to understand and maintain, because of all the boilerplate code needed to put the shop in the state we needed for testing.
+- Some tests were producing side-effects that made other tests fail because of unexpected/inconsistent state (usually due to hidden cache in legacy code).
+- E2E tests failed randomly because of timeouts (Selenium + WebDriverIO issues).
+
+We believe that bugs are a natural side-effect of changing things, and that automated tests are the only way to be able to consistently move forward without breaking stuff... but what happens when the tests themselves are breaking up constantly for unknown reasons?
+
+Based on this evidence, we recently decided to:
+
+- Move all PhpUnit tests into a `legacy-tests` directory while we clean them up.
+- [Introduce Behat][behat] for Integration, human-readable tests.
+- Progressively refactor tests into either Unit (completely isolated) or Integration tests.
+- Move E2E test from Selenium + Webdriver to [Puppeteer][puppeteer].
+
+This will help us get a better grasp on tests. But it will remain hard to automate them as long as the system they test remains so complex.
+
 
 ## Duplicate systems
 
